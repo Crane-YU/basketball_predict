@@ -64,14 +64,16 @@ if plot:
     data_loaded.plot_traj_2d(20, 'at %.0f feet from basket' % db)
 
 X_train = np.transpose(data_dict['X_train'], [0, 2, 1])
+# X_train = data_dict['X_train']
 y_train = data_dict['y_train']
 X_val = np.transpose(data_dict['X_val'], [0, 2, 1])
+# X_val = data_dict['X_val']
 y_val = data_dict['y_val']
 
 N, crd, _ = X_train.shape
 num_val = X_val.shape[0]
 
-config['crd'] = crd  # Number of coordinates. usually three (X,Y,Z) and time, crd=3
+config['crd'] = crd  # Number of coordinates. usually three (X,Y,Z) and time, crd=4
 
 # How many epochs we train
 epochs = np.floor(batch_size * max_iterations / N)
@@ -84,7 +86,7 @@ perf_collect = np.zeros((7, int(np.floor(max_iterations / plot_every))))
 
 sess = tf.Session()
 
-# Initial settings for early stopping
+# Initial settings for early stopping, auc: area under curve
 auc_ma = 0.0
 auc_best = 0.0
 

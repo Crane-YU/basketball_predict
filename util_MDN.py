@@ -13,29 +13,22 @@ import matplotlib.pyplot as plt
 
 #  Extracts form the implementation by https://github.com/hardmaru/write-rnn-tensorflow
 def lstm_cell(lstm_size, keep_prob):
-    lstm = tf.nn.rnn_cell.BasicLSTMCell(lstm_size)
+    lstm = tf.nn.rnn_cell.BasicLSTMCell(num_units=lstm_size)
     drop = tf.nn.rnn_cell.DropoutWrapper(lstm, output_keep_prob=keep_prob)
     return drop
 
 
 def tf_2d_normal(x1, x2, mu1, mu2, s1, s2, rho):
-    """ 2D normal distribution
-    input:
-    - x, mu: input vectors
-    - s1, s2: standard deviances over x1 and x2
-    - rho: correlation coefficient in x1-x2 plane
-    """
-
-    # eq # 24 and 25 of http://arxiv.org/abs/1308.0850
     norm1 = tf.subtract(x1, mu1)
     norm2 = tf.subtract(x2, mu2)
     s1s2 = tf.multiply(s1, s2)
     z = tf.square(tf.div(norm1, s1)) + tf.square(tf.div(norm2, s2)) - \
-        2.0 * tf.div(tf.multiply(rho, tf.multiply(norm1, norm2)), s1s2)
-    numerator = tf.exp(tf.div(-1.0 * z, 2.0 * (1 - tf.square(rho))))
-    denominator = 2 * np.pi * tf.multiply(s1s2, tf.sqrt(1 - tf.square(rho)))
-    px1x2 = tf.div(numerator, denominator)
-    return px1x2
+        2 * tf.div(tf.multiply(rho, tf.multiply(norm1, norm2)), s1s2)
+    negRho = 1 - tf.square(rho)
+    result = tf.exp(tf.div(-z, 2 * negRho))
+    denom = 2 * np.pi * tf.multiply(s1s2, tf.sqrt(negRho))
+    result = tf.div(result, denom)
+    return result
 
 
 def tf_1d_normal(x3, mu3, s3):

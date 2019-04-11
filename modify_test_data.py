@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from new_dataloader import *
+from data_preprocessor import *
 
 file_dir = '/Users/craneyu/PycharmProjects/basketball_predict/'
 csv_file = 'data_test_modified.csv'

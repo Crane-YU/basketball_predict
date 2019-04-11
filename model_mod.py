@@ -4,8 +4,6 @@ Created on Tue Mar 22 10:43:29 2016
 
 @author: Rob Romijnders
 
-TODO
-- Cross validate over different learning-rates
 """
 import sys
 
@@ -15,9 +13,9 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import clip_ops
-from util_basket import *
+# from util_basket import *
 from util_MDN import *
-from dataloader import *
+from data_preprocessor import *
 from mpl_toolkits.mplot3d import axes3d
 import matplotlib.mlab as mlab
 
@@ -25,13 +23,13 @@ import matplotlib.mlab as mlab
 class Model():
     def __init__(self, config):
         # Hyper parameters
-        num_layers = config['num_layers']
-        hidden_size = config['hidden_size']
-        max_grad_norm = config['max_grad_norm']
-        batch_size = config['batch_size']
-        sl = config['sl']
-        mixtures = config['mixtures']
-        crd = config['crd']
+        num_layers = config['num_layers']  # 2 layers
+        hidden_size = config['hidden_size']  # hidden size 64
+        max_grad_norm = config['max_grad_norm']  # 1
+        batch_size = config['batch_size']  # batch size 64
+        sl = config['sl']  # 39
+        mixtures = config['mixtures']  # 2 mixtures
+        crd = config['crd']  # 2 features
         learning_rate = config['learning_rate']
         MDN = config['MDN']
         self.sl = sl
@@ -41,26 +39,30 @@ class Model():
         # Nodes for the input variables
         self.x = tf.placeholder(dtype=tf.float32, shape=[batch_size, crd, sl], name='Input_data')
         self.y_ = tf.placeholder(dtype=tf.int64, shape=[batch_size], name='Ground_truth')
+        self.seq_length = tf.placeholder(tf.int32, [None], name='Sequence_length')
         self.keep_prob = tf.placeholder("float")
 
+        # LSTM layer
         with tf.name_scope("LSTM") as scope:
             cell = tf.nn.rnn_cell.MultiRNNCell([
                 lstm_cell(hidden_size, self.keep_prob) for _ in range(num_layers)
             ])
 
+            # inputs is a list with length T=sl(39)
+            # inside the inputs, the shape of each element is (batch_size, input_size)
             inputs = tf.unstack(self.x, axis=2)
-            print("input shape is: ", len(inputs))
-            print("input shape element is: ", inputs)
+            outputs, _ = tf.nn.static_rnn(cell, inputs, sequence_length=self.seq_length, dtype=tf.float32)
+            # outputs, _ = tf.contrib.rnn.dynamic_rnn(cell=cell,
+            #                                         inputs=inputs,
+            #                                         sequence_length=seq_length,
+            #                                         dtype=tf.float32)
 
-            outputs, _ = tf.nn.static_rnn(cell, inputs, dtype=tf.float32)
-            # outputs, _ = tf.contrib.rnn.static_rnn(cell, inputs, dtype=tf.float32)
-            # TEST
+            # the size is: (sequence_length = 39, batch_size = 64, hidden_unit = 64)
             print("The length of output: ", len(outputs))
-            print("The elements of output: ", outputs)
 
         with tf.name_scope("SoftMax") as scope:
             final = outputs[-1]
-            W_c = tf.Variable(tf.random_normal([hidden_size, 2], stddev=0.01))
+            W_c = tf.Variable(tf.random_normal([hidden_size, 2]))
             b_c = tf.Variable(tf.constant(0.1, shape=[2]))
             self.h_c = tf.matmul(final, W_c) + b_c
             print("The shape of h_c is: ", self.h_c.shape)
@@ -70,33 +72,30 @@ class Model():
             loss_summary = tf.summary.scalar("cross entropy_loss", self.cost)
 
         with tf.name_scope("Output_MDN") as scope:
-            params = 8  # 7+theta
+            params = 6  # 5+theta
             # Two for distribution over hit&miss, params for distribution parameters
             output_units = mixtures * params
-            print("The number of output units is: ", output_units)
-            W_o = tf.Variable(tf.random_normal([hidden_size, output_units], stddev=0.01))
+            W_o = tf.Variable(tf.random_normal([hidden_size, output_units]))
             b_o = tf.Variable(tf.constant(0.5, shape=[output_units]))
             # For comparison with XYZ, only up to last time_step
             # --> because for final time_step you cannot make a prediction
             output = outputs[:-1]
             outputs_tensor = tf.concat(output, axis=0)  # shape is [batch_size * (seq_len-1), hidden_size]
-
-            # x = tf.unstack(x, axis=1)
             h_out_tensor = tf.nn.xw_plus_b(outputs_tensor, W_o, b_o)  # size: [batch_size * (seq_len-1), output_units]
 
         with tf.name_scope('MDN_over_next_vector') as scope:
             # Next two lines are rather ugly, But its the most efficient way to reshape the data
-            h_xyz = tf.reshape(h_out_tensor, (sl - 1, batch_size, output_units))
+            h_xy = tf.reshape(h_out_tensor, (sl - 1, batch_size, output_units))
             # transpose to [batch_size, output_units, sl-1]
-            h_xyz = tf.transpose(h_xyz, [1, 2, 0])
-            print("The size of h_xyz is: ", h_xyz.shape)
+            h_xy = tf.transpose(h_xy, [1, 2, 0])
+
             # x_next = tf.slice(x,[0,0,1],[batch_size,3,sl-1])  #in size [batch_size, output_units, sl-1]
-            x_next = tf.subtract(self.x[:, :3, 1:], self.x[:, :3, :sl - 1])  # offset of the coordinates?
+            x_next = tf.subtract(self.x[:, :2, 1:], self.x[:, :2, :sl - 1])  # offset of the coordinates?
             # From here, many variables have size [batch_size, mixtures, sl-1]
             # xn1 size: [batch_size, x, sl-1]; xn2 size: [batch_size, y, sl-1]; xn3 size: [batch_size, z, sl-1]
-            xn1, xn2, xn3 = tf.split(value=x_next, num_or_size_splits=3, axis=1)
-            self.mu1, self.mu2, self.mu3, self.s1, self.s2, self.s3, self.rho, self.theta = \
-                tf.split(value=h_xyz, num_or_size_splits=params, axis=1)
+            xn1, xn2 = tf.split(value=x_next, num_or_size_splits=2, axis=1)
+            self.mu1, self.mu2, self.s1, self.s2, self.rho, self.theta = \
+                tf.split(value=h_xy, num_or_size_splits=params, axis=1)
 
             # make the theta mixtures
             # softmax all the theta's:
@@ -109,20 +108,22 @@ class Model():
             # Deviances are non-negative and tho between -1 and 1
             self.s1 = tf.exp(self.s1)
             self.s2 = tf.exp(self.s2)
-            self.s3 = tf.exp(self.s3)
+            # self.s3 = tf.exp(self.s3)
             self.rho = tf.tanh(self.rho)
 
             # probability in x1x2 plane
             px1x2 = tf_2d_normal(xn1, xn2, self.mu1, self.mu2,
                                  self.s1, self.s2, self.rho)
-            px3 = tf_1d_normal(xn3, self.mu3, self.s3)
-            px1x2x3 = tf.multiply(px1x2, px3)
+            # px3 = tf_1d_normal(xn3, self.mu3, self.s3)
+            # px1x2x3 = tf.multiply(px1x2, px3)
 
             # Sum along the mixtures in dimension 1
-            px1x2x3_mixed = tf.reduce_sum(tf.multiply(px1x2x3, self.theta), 1)
+            # px1x2x3_mixed = tf.reduce_sum(tf.multiply(px1x2x3, self.theta), 1)
+            px1x2_mixed = tf.reduce_sum(tf.multiply(px1x2, self.theta), 1)
             print('You are using %.0f mixtures' % mixtures)
             # at the beginning, some errors are exactly zero.
-            loss_seq = -tf.log(tf.maximum(px1x2x3_mixed, 1e-20))
+            # loss_seq = -tf.log(tf.maximum(px1x2x3_mixed, 1e-20))
+            loss_seq = -tf.log(tf.maximum(px1x2_mixed, 1e-20))
             self.cost_seq = tf.reduce_mean(loss_seq)
             self.cost_comb = self.cost
             if MDN:
@@ -166,71 +167,3 @@ class Model():
         # Define one op to call all summaries
         self.merged = tf.summary.merge_all()
 
-    # def sample(self, sess, seq, sl_pre=4, bias=0):
-    #     """
-    #     Continually samples from the MDN. The first "sl_pre" samples
-    #     are taken from original data in seq
-    #     input
-    #     - sess: tf session
-    #     - seq: a sequence in [crd,sl]
-    #     - sl_pre: how many predefined sequence stamps to use?
-    #     """
-    #     assert seq.shape[1] == self.sl and seq.shape[
-    #         0] == self.crd, 'Feed a sequence in [crd,sl]'
-    #     assert sl_pre > 1, 'Please provide two predefined coordinates'
-    #
-    #     def sample_theta(thetas):
-    #         stop = np.random.rand()  # random number to stop
-    #         num_thetas = len(thetas)
-    #         cum = 0.0  # cumulative probability
-    #         for i in range(num_thetas):
-    #             cum += thetas[i]
-    #             if cum > stop:
-    #                 return i
-    #         print('No theta is drawn, ERROR')
-    #         return
-    #
-    #     # Work around for tensor sizes, feed a tensor with zeros
-    #     seq_feed = np.zeros((self.batch_size, self.crd, self.sl))
-    #     seq_feed[0, :, :] = seq[:, :]
-    #     offset_draw = np.zeros((3))  # 3 coordinates
-    #     # from the predefined sequences till end
-    #     for sl_draw in range(sl_pre, self.sl - 1):
-    #         feed_dict = {self.x: seq_feed, self.keep_prob: 1.0}
-    #         result = sess.run([self.mu1, self.mu2, self.mu3, self.s1,
-    #                            self.s2, self.s3, self.rho, self.theta], feed_dict=feed_dict)
-    #
-    #         # Sample from theta
-    #         idx_theta = sample_theta(result[7][0, :, sl_pre])
-    #
-    #         # Collect two distributions to draw from
-    #         #  One for XY plane
-    #         #  One for Z plane
-    #         mean = np.zeros((3))
-    #         mean[0] = result[0][0, idx_theta, sl_draw]
-    #         mean[1] = result[1][0, idx_theta, sl_draw]
-    #         mean[2] = result[2][0, idx_theta, sl_draw]
-    #         cov = np.zeros((3, 3))
-    #         sigma1 = np.exp(-1 * bias) * result[3][0, idx_theta, sl_draw]
-    #         sigma2 = np.exp(-1 * bias) * result[4][0, idx_theta, sl_draw]
-    #         sigma3 = np.exp(-1 * bias) * result[5][0, idx_theta, sl_draw]
-    #         sigma12 = result[6][0, idx_theta, sl_draw] * sigma1 * sigma2
-    #         cov[0, 0] = np.square(sigma1)
-    #         cov[1, 1] = np.square(sigma2)
-    #         cov[2, 2] = np.square(sigma3)
-    #         cov[1, 2] = sigma12
-    #         cov[2, 1] = sigma12
-    #         rv = multivariate_normal(mean, cov)
-    #         draw = rv.rvs()
-    #         offset_draw = draw
-    #         seq_feed[0, :3, sl_draw + 1] = seq_feed[0, :3, sl_draw] + offset_draw
-    #
-    #     # Now draw some trajectories
-    #     fig = plt.figure()
-    #     ax = fig.gca(projection='3d')
-    #     ax.plot(seq[0, :], seq[1, :], seq[2, :], 'r')
-    #     ax.plot(seq_feed[0, 0, :], seq_feed[0, 1, :], seq_feed[0, 2, :], 'b')
-    #     ax.set_xlabel('x coordinate')
-    #     ax.set_ylabel('y coordinate')
-    #     ax.set_zlabel('z coordinate')
-    #     return seq_feed[0]

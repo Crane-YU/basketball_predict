@@ -95,8 +95,8 @@ class DataLoad():
         start_ind = 0
         row, _ = df_arr.shape
         for i in range(1, row):
-            if verbose and i % 1000 == 0:
-                print('At line %5.0f of %5.0f' % (i, row))
+            # if verbose and i % 1000 == 0:
+            #     print('At line %5.0f of %5.0f' % (i, row))
             if int(df_arr[i, 5]) == 1:  # rankc is 1
                 # print("Enter the if-statement at id=", i)
                 end_ind = i  # Note this represent the final index + 1
